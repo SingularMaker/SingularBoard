@@ -23,6 +23,7 @@
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
 #include "stdio.h"
+#include "string.h"
 
 /* __GNUC__ */
 /* USER CODE END Includes */
@@ -34,6 +35,8 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define SPEED_ON 	(1)
+#define SPEED_OFF 	(0)
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -45,6 +48,8 @@
 I2C_HandleTypeDef hi2c1;
 I2C_HandleTypeDef hi2c2;
 
+TIM_HandleTypeDef htim2;
+
 UART_HandleTypeDef huart2;
 
 /* USER CODE BEGIN PV */
@@ -54,12 +59,14 @@ UART_HandleTypeDef huart2;
 /* Private function prototypes -----------------------------------------------*/
 void SystemClock_Config(void);
 static void MX_GPIO_Init(void);
-static void MX_USART2_UART_Init(void);
+static void MX_TIM2_Init(void);
 static void MX_I2C1_Init(void);
 static void MX_I2C2_Init(void);
+static void MX_USART2_UART_Init(void);
 /* USER CODE BEGIN PFP */
 static uint8_t I2C_recvBuf[10] = {0};
 static uint8_t I2C_sendBuf[10] = {0,1,2,3,4,5,6,7,8,9};
+//static uint8_t cmd;
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -69,14 +76,77 @@ int __io_putchar(int ch) {
 	  return ch;
 }
 
+
+void set_led_blinking(uint8_t on_off) {
+	uint8_t status=0;
+	if (on_off == 1)
+
+		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_SET);
+	else
+		HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
+
+	status = HAL_GPIO_ReadPin(GPIOA,GPIO_PIN_5);
+	printf("status = %d", status);
+
+}
+
+void set_motor_speed(TIM_HandleTypeDef htim_num, int channel, int duty, uint8_t on_off) {
+	int speed = 0;
+	static uint8_t status = SPEED_OFF;
+
+	if (on_off == SPEED_ON) {
+		printf("CCR1 b =%ld\r\n",htim2.Instance->CCR1);
+		speed = ((htim_num.Init.Period + 1) * duty / 100) - 1;
+		if (status == SPEED_OFF) {
+			HAL_TIM_PWM_Start(&htim_num, channel);
+			status = SPEED_ON;
+		}
+		__HAL_TIM_SET_COMPARE(&htim_num, channel, speed);
+		printf("CCR1 a =%ld\r\n",htim2.Instance->CCR1);
+
+	} else {
+		HAL_TIM_PWM_Stop(&htim_num, channel);
+		status = SPEED_ON;
+	}
+}
+
+void i2c_fn_handler(uint8_t* data, uint8_t rx_size) {
+	uint8_t rxbuf[10] = {0};
+	uint8_t cmd = 0;
+
+	memcpy(rxbuf, data, rx_size);
+    cmd = rxbuf[0];
+    printf("cmd =%d\r\n", cmd);
+
+    switch(cmd) {
+    	case 0:
+    		set_motor_speed(htim2, TIM_CHANNEL_1, 10, SPEED_ON);
+    		printf("set duty 10\r\n");
+    		break;
+    	case 5:
+    		set_motor_speed(htim2, TIM_CHANNEL_1, 90, SPEED_ON);
+    		printf("set duty 90\r\n");
+    		break;
+    	default:
+    		break;
+    }
+
+
+
+}
+
 void HAL_I2C_SlaveRxCpltCallback(I2C_HandleTypeDef *hi2c)
 {
-	int i =0;
-	for (i=0; i < sizeof(I2C_recvBuf); i++) {
-	  printf("%d", I2C_recvBuf[i]);
+	//uint8_t cmd = 0;
+	//uint8_t rx_buf[10];
+
+	if( hi2c->Instance = I2C1 ) {
+		i2c_fn_handler(I2C_recvBuf, sizeof(I2C_recvBuf));
+		memset(I2C_recvBuf, 0, sizeof(I2C_recvBuf));
+		HAL_I2C_Slave_Receive_IT(hi2c, I2C_recvBuf, sizeof(I2C_recvBuf));
 	}
-	HAL_I2C_Slave_Receive_IT(&hi2c1,I2C_recvBuf,sizeof(I2C_recvBuf));
 }
+
 /* USER CODE END 0 */
 
 /**
@@ -107,24 +177,31 @@ int main(void)
 
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
-  MX_USART2_UART_Init();
+  MX_TIM2_Init();
   MX_I2C1_Init();
   MX_I2C2_Init();
+  MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
+
 
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+  HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_1);
   HAL_I2C_Slave_Receive_IT(&hi2c1,I2C_recvBuf,sizeof(I2C_recvBuf));
   while (1)
   {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-	HAL_I2C_Master_Transmit(&hi2c2, (20<<1)|0x00, I2C_sendBuf, sizeof(I2C_sendBuf), 1000);
-//	printf("abc\r\n");
-	HAL_Delay(100);
+
+	for (int i=0; i< 10; i++) {
+		I2C_sendBuf[0] = i;
+		HAL_I2C_Master_Transmit(&hi2c2, (20<<1)|0x00, I2C_sendBuf, sizeof(I2C_sendBuf), 1000);
+		HAL_Delay(1000);
+	}
+	  //	printf("abc\r\n");
   }
   /* USER CODE END 3 */
 }
@@ -242,6 +319,65 @@ static void MX_I2C2_Init(void)
 }
 
 /**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+  TIM_OC_InitTypeDef sConfigOC = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 8400-1;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 10000-1;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  if (HAL_TIM_PWM_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sConfigOC.OCMode = TIM_OCMODE_PWM1;
+  sConfigOC.Pulse = 0;
+  sConfigOC.OCPolarity = TIM_OCPOLARITY_HIGH;
+  sConfigOC.OCFastMode = TIM_OCFAST_DISABLE;
+  if (HAL_TIM_PWM_ConfigChannel(&htim2, &sConfigOC, TIM_CHANNEL_1) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
+  HAL_TIM_MspPostInit(&htim2);
+
+}
+
+/**
   * @brief USART2 Initialization Function
   * @param None
   * @retval None
@@ -281,21 +417,10 @@ static void MX_USART2_UART_Init(void)
   */
 static void MX_GPIO_Init(void)
 {
-  GPIO_InitTypeDef GPIO_InitStruct = {0};
 
   /* GPIO Ports Clock Enable */
   __HAL_RCC_GPIOA_CLK_ENABLE();
   __HAL_RCC_GPIOB_CLK_ENABLE();
-
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOA, GPIO_PIN_5, GPIO_PIN_RESET);
-
-  /*Configure GPIO pin : PA5 */
-  GPIO_InitStruct.Pin = GPIO_PIN_5;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
 }
 
